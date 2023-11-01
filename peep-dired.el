@@ -63,7 +63,7 @@
   :type 'boolean)
 
 (defcustom peep-dired-ignored-extensions
-  '("mkv" "iso" "mp4")
+  '("mkv" "iso")
   "Extensions to not try to open"
   :group 'peep-dired
   :type 'list)
@@ -103,21 +103,37 @@
       (run-hooks 'peep-dired-hook))
     (current-buffer)))
 
+(defun generate-video-preview-file (filepath)
+  (let ((command (format "python3 ~/.emacs.d/site-lisp/peep-dired/python/preview_gen.py %s" filepath)))
+    (message "Running Python script on: %s" filepath)
+    (let ((return-value (shell-command command)))
+      (message "Return value: %s" return-value))))
+
+(defun file-md5sum (file-path)
+  "Calculate the MD5 checksum of a given file using the system's md5sum command.
+FILE-PATH should be the full path to the file."
+  (let ((md5sum-output (shell-command-to-string (concat "md5sum " (shell-quote-argument file-path)))))
+    (car (split-string md5sum-output))))
+
 (defun peep-dired-display-file-other-window ()
   (let ((entry-name (dired-file-name-at-point)))
-    (unless (or (member (file-name-extension entry-name)
-                        peep-dired-ignored-extensions)
-                (> (nth 7 (file-attributes entry-name))
-                   peep-dired-max-size))
-      (add-to-list 'peep-dired-peeped-buffers
-                   (window-buffer
-                    (display-buffer
-                     (if (file-directory-p entry-name)
-                         (peep-dired-dir-buffer entry-name)
-                       (or
-                        (find-buffer-visiting entry-name)
-                        (find-file-noselect entry-name)))
-                     t))))))
+    (unless (> (nth 7 (file-attributes entry-name))
+	       peep-dired-max-size)
+      (let* ((is-video (member (file-name-extension entry-name) '("mp4" "avi" "mkv" "mov" "ts")))
+             (preview-file-name (if is-video
+                                    (concat "~/.cache/dired-preview/" (file-md5sum (expand-file-name entry-name)) ".png")
+                                  entry-name)))
+        (when (and is-video (not (file-exists-p preview-file-name)))
+          (generate-video-preview-file (expand-file-name entry-name)))
+        (add-to-list 'peep-dired-peeped-buffers
+                     (window-buffer
+                      (display-buffer
+                       (if (file-directory-p preview-file-name)
+                           (peep-dired-dir-buffer preview-file-name)
+                         (or
+                          (find-buffer-visiting preview-file-name)
+                          (find-file-noselect preview-file-name)))
+                       t)))))))
 
 (defun peep-dired-scroll-page-down ()
   (interactive)
