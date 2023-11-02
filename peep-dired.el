@@ -30,6 +30,7 @@
 ;;; Code:
 
 (require 'cl-macs)
+(require 'subr-x)
 
 (defvar peep-dired-mode-map
   (let ((map (make-sparse-keymap)))
@@ -73,6 +74,11 @@
   :group 'peep-dired
   :type 'integer)
 
+(defcustom peep-dired-video-cache-path "~/.cache/dired-preview/"
+  "Path of dired video cache"
+  :group 'peep-dired
+  :type 'string)
+
 (defun peep-dired-next-file ()
   (interactive)
   (dired-next-line 1)
@@ -103,17 +109,29 @@
       (run-hooks 'peep-dired-hook))
     (current-buffer)))
 
-(defun generate-video-preview-file (filepath)
-  (let ((command (format "python3 ~/.emacs.d/site-lisp/peep-dired/python/preview_gen.py %s" filepath)))
-    (message "Running Python script on: %s" filepath)
-    (let ((return-value (shell-command command)))
-      (message "Return value: %s" return-value))))
+(defun generate-video-preview (video-path)
+  "Generate a preview for a video file at VIDEO-PATH."
+  (let* ((video-name (file-name-nondirectory video-path))
+         (md5-hash (file-md5sum video-path))
+         (cache-dir (expand-file-name peep-dired-video-cache-path))
+         (preview-name (concat md5-hash ".png"))
+         (preview-path (expand-file-name preview-name cache-dir))
+         (command (format "ffmpeg -i %s -vf 'thumbnail,scale=640:-1' -frames:v 1 -threads 4 %s"
+                          (shell-quote-argument video-path)
+                          (shell-quote-argument preview-path))))
+    (unless (file-exists-p cache-dir)
+      (make-directory cache-dir t))
+    (message "Generating preview for: %s" video-name)
+    (if (zerop (shell-command command))
+        (message "Preview generated: %s" preview-path)
+      (message "Failed to generate preview for: %s" video-name))))
 
 (defun file-md5sum (file-path)
-  "Calculate the MD5 checksum of a given file using the system's md5sum command.
+  "Calculate the MD5 checksum of the first 400KB of a given file using the system's dd and md5sum commands.
 FILE-PATH should be the full path to the file."
-  (let ((md5sum-output (shell-command-to-string (concat "md5sum " (shell-quote-argument file-path)))))
-    (car (split-string md5sum-output))))
+  (let ((command (format "dd if=%s bs=4K count=100 2>/dev/null | md5sum"
+                         (shell-quote-argument file-path))))
+    (car (split-string (shell-command-to-string command)))))
 
 (defun peep-dired-display-file-other-window ()
   (let ((entry-name (dired-file-name-at-point)))
@@ -121,10 +139,10 @@ FILE-PATH should be the full path to the file."
 	       peep-dired-max-size)
       (let* ((is-video (member (file-name-extension entry-name) '("mp4" "avi" "mkv" "mov" "ts")))
              (preview-file-name (if is-video
-                                    (concat "~/.cache/dired-preview/" (file-md5sum (expand-file-name entry-name)) ".png")
+                                    (concat peep-dired-video-cache-path (file-md5sum (expand-file-name entry-name)) ".png")
                                   entry-name)))
         (when (and is-video (not (file-exists-p preview-file-name)))
-          (generate-video-preview-file (expand-file-name entry-name)))
+          (generate-video-preview (expand-file-name entry-name)))
         (add-to-list 'peep-dired-peeped-buffers
                      (window-buffer
                       (display-buffer
